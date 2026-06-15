@@ -16,3 +16,6 @@ Este projeto já carrega o Firebase usando o arquivo `src/main/resources/firebas
 - Verifique que o arquivo existe e contém as credenciais de service account do Firebase.
 - O arquivo deve estar disponível no classpath quando o JAR for executado.
 - Se a inicialização falhar, o aplicativo exibirá uma mensagem de erro e não abrirá a interface.
+
+
+NOTA CRUSCIAL: adicione sempre depois de baixar o arquivo por aqui, adicione a pasta descompactada "resources" no caminho: "(PASTA ONDE O ARQUIVO FOI BAIXADO)\SRMI Project\src\main" para evitar crashes e erros indesejados
