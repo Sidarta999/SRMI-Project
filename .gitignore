@@ -1,9 +1,21 @@
-# Maven build output
-/target/
+# Pastas de Build e Compilação
+target/
+**/target/
+*.class
+**/*.class
 
-# Firebase service account credentials
-/src/main/resources/firebase-config.json
+# Arquivos de Configuração do Firebase
+src/main/resources/firebase-config*.json
 
-# IDE files
-/.idea/
-*.iml
+# VS Code (Configurações do seu editor)
+.vscode/
+.settings/
+.classpath
+.project
+
+# Arquivos de Sistema e Backups
+.DS_Store
+Thumbs.db
+*.zip
+*.7z
+*.rar

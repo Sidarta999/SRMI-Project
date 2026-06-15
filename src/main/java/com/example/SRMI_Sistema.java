@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 import com.google.cloud.firestore.DocumentSnapshot;
 import com.google.cloud.firestore.Firestore;
@@ -212,6 +214,7 @@ class Reporte {
 
 public class SRMI_Sistema extends JFrame {
     private static final long serialVersionUID = 1L;
+    private static final Logger logger = Logger.getLogger(SRMI_Sistema.class.getName());
 
     private CardLayout cardLayout = new CardLayout();
     private JPanel container = new JPanel(cardLayout);
@@ -250,7 +253,12 @@ public class SRMI_Sistema extends JFrame {
     }
 
     private static String getStringOrDefault(DocumentSnapshot document, String field) {
-        return Objects.requireNonNullElse(document.getString(field), "");
+        try {
+            return Objects.requireNonNullElse(document.getString(field), "");
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Erro ao ler campo " + field + ": " + e.getMessage());
+            return "";
+        }
     }
 
     private static String safeString(String value) {
@@ -259,6 +267,19 @@ public class SRMI_Sistema extends JFrame {
 
     private static List<String> safeStringList(List<String> value) {
         return value == null ? List.of() : new ArrayList<>(value);
+    }
+
+    private static Firestore getFirestore() throws Exception {
+        try {
+            Firestore db = FirestoreClient.getFirestore();
+            if (db == null) {
+                throw new IllegalStateException("Firestore não inicializado corretamente");
+            }
+            return db;
+        } catch (Exception e) {
+            logger.log(Level.SEVERE, "Erro ao obter Firestore: " + e.getMessage(), e);
+            throw new Exception("Falha ao conectar ao Firebase Firestore: " + e.getMessage(), e);
+        }
     }
 
     private static List<String> getStringListOrEmpty(DocumentSnapshot document, String field) {
@@ -308,10 +329,16 @@ public class SRMI_Sistema extends JFrame {
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() throws Exception {
-                Firestore db = FirestoreClient.getFirestore();
-                String usuarioCpf = Objects.requireNonNull(cpf, "cpf do usuário");
-                db.collection("usuarios").document(usuarioCpf).update("saldoCoins", novoSaldo).get();
-                return null;
+                try {
+                    Firestore db = getFirestore();
+                    String usuarioCpf = Objects.requireNonNull(cpf, "cpf do usuário");
+                    db.collection("usuarios").document(usuarioCpf).update("saldoCoins", novoSaldo).get();
+                    logger.log(Level.INFO, "Saldo atualizado para " + usuarioCpf + ": " + novoSaldo);
+                    return null;
+                } catch (Exception e) {
+                    logger.log(Level.SEVERE, "Erro ao atualizar saldo: " + e.getMessage(), e);
+                    throw e;
+                }
             }
             @Override
             protected void done() {
@@ -319,7 +346,8 @@ public class SRMI_Sistema extends JFrame {
                     get();
                     if (aoConcluir != null) aoConcluir.run();
                 } catch (Exception ex) {
-                    alert("Erro de Rede", "Não foi possível atualizar as moedas na nuvem.", true);
+                    logger.log(Level.SEVERE, "Erro de rede ao atualizar saldo: " + ex.getMessage());
+                    alert("Erro de Rede", "Não foi possível atualizar as moedas na nuvem: " + ex.getMessage(), true);
                 }
             }
         }.execute();
@@ -329,7 +357,7 @@ public class SRMI_Sistema extends JFrame {
         new SwingWorker<Void, Void>() {
             @Override
             protected Void doInBackground() throws Exception {
-                Firestore db = FirestoreClient.getFirestore();
+                Firestore db = getFirestore();
                 String chamadoId = Objects.requireNonNull(r.getId(), "id do chamado");
                 String autorCpf = Objects.requireNonNull(r.getAutorCpf(), "cpf do autor");
 
@@ -386,33 +414,45 @@ public class SRMI_Sistema extends JFrame {
             new SwingWorker<Usuario, Void>() {
                 @Override
                 protected Usuario doInBackground() throws Exception {
-                    Firestore db = FirestoreClient.getFirestore();
-                    DocumentSnapshot doc = db.collection("usuarios").document(login).get().get();
-                    
-                    if (!doc.exists()) {
-                        QuerySnapshot query = db.collection("usuarios").whereEqualTo("email", login).get().get();
-                        if (!query.isEmpty()) {
-                            doc = query.getDocuments().get(0);
-                        }
-                    }
-
-                    if (doc.exists() && senha.equals(doc.getString("senha"))) {
-                        String tipo = doc.getString("tipo");
-                        String nome = doc.getString("nome");
-                        String email = doc.getString("email");
-                        String cpf = doc.getId();
+                    try {
+                        Firestore db = getFirestore();
+                        DocumentSnapshot doc = db.collection("usuarios").document(login).get().get();
                         
-                        if ("Admin".equals(tipo)) {
-                            return new UsuarioAdmin(nome, email, cpf, senha);
-                        } else {
-                            UsuarioSimples uSimples = new UsuarioSimples(nome, email, cpf, senha);
-                            Long saldoCoins = doc.getLong("saldoCoins");
-                            long coins = saldoCoins != null ? saldoCoins : 0L;
-                            uSimples.setSaldoCoins((int) coins);
-                            return uSimples;
+                        if (!doc.exists()) {
+                            QuerySnapshot query = db.collection("usuarios").whereEqualTo("email", login).get().get();
+                            if (!query.isEmpty()) {
+                                doc = query.getDocuments().get(0);
+                            }
                         }
+
+                        if (doc.exists()) {
+                            String tipo = getStringOrDefault(doc, "tipo");
+                            String senhaArmazenada = getStringOrDefault(doc, "senha");
+                            
+                            // Verifica a senha
+                            if (senha.equals(senhaArmazenada)) {
+                                String nome = getStringOrDefault(doc, "nome");
+                                String email = getStringOrDefault(doc, "email");
+                                String cpf = doc.getId();
+                                
+                                if ("Admin".equals(tipo)) {
+                                    return new UsuarioAdmin(nome, email, cpf, senha);
+                                } else {
+                                    UsuarioSimples uSimples = new UsuarioSimples(nome, email, cpf, senha);
+                                    Long saldoCoins = doc.getLong("saldoCoins");
+                                    long coins = saldoCoins != null ? saldoCoins : 0L;
+                                    uSimples.setSaldoCoins((int) coins);
+                                    logger.log(Level.INFO, "Login bem-sucedido para: " + email);
+                                    return uSimples;
+                                }
+                            }
+                        }
+                        logger.log(Level.WARNING, "Falha de autenticação para login: " + login);
+                        return null;
+                    } catch (Exception e) {
+                        logger.log(Level.SEVERE, "Erro durante autenticação: " + e.getMessage(), e);
+                        throw new Exception("Erro na autenticação: " + e.getMessage(), e);
                     }
-                    return null;
                 }
 
                 @Override
@@ -431,7 +471,12 @@ public class SRMI_Sistema extends JFrame {
                             alert("Acesso Negado", "Usuário não cadastrado ou senha inválida.", true);
                         }
                     } catch (Exception ex) {
-                        alert("Erro de Rede", "Erro ao conectar com o banco de dados.", true);
+                        logger.log(Level.SEVERE, "Erro de rede durante login: " + ex.getMessage(), ex);
+                        String mensagem = "Erro ao conectar com o banco de dados.";
+                        if (ex.getCause() != null) {
+                            mensagem = "Erro Firebase: " + ex.getCause().getMessage();
+                        }
+                        alert("Erro de Rede", mensagem, true);
                     }
                 }
             }.execute();
@@ -501,7 +546,7 @@ public class SRMI_Sistema extends JFrame {
             new SwingWorker<Boolean, Void>() {
                 @Override
                 protected Boolean doInBackground() throws Exception {
-                    Firestore db = FirestoreClient.getFirestore();
+                    Firestore db = getFirestore();
                     DocumentSnapshot doc = db.collection("usuarios").document(cpf).get().get();
                     if (doc.exists()) {
                         return false; 
@@ -582,7 +627,7 @@ public class SRMI_Sistema extends JFrame {
             @Override
             protected List<Reporte> doInBackground() throws Exception {
                 List<Reporte> userReports = new ArrayList<>();
-                Firestore db = FirestoreClient.getFirestore();
+                Firestore db = getFirestore();
                 QuerySnapshot query = db.collection("chamados")
                                         .whereEqualTo("autorCpf", aluno.getCpf())
                                         .get().get();
@@ -617,6 +662,7 @@ public class SRMI_Sistema extends JFrame {
                     hist.revalidate();
                     hist.repaint();
                 } catch (Exception ex) {
+                    logger.log(Level.SEVERE, "Erro ao carregar histórico: " + ex.getMessage(), ex);
                     JLabel lblErr = new JLabel("Falha ao recuperar histórico.");
                     lblErr.setForeground(COLOR_DANGER);
                     lblErr.setAlignmentX(0.5f);
@@ -768,17 +814,28 @@ public class SRMI_Sistema extends JFrame {
                 new SwingWorker<String, Void>() {
                     @Override
                     protected String doInBackground() throws Exception {
-                        byte[] bytes = Files.readAllBytes(file.toPath());
-                        return Base64.getEncoder().encodeToString(bytes);
+                        try {
+                            return uploadParaImgur(file);
+                        } catch (Exception e) {
+                            System.out.println("Imgur falhou, fallback para Base64: " + e.getMessage());
+                            byte[] bytes = Files.readAllBytes(file.toPath());
+                            return Base64.getEncoder().encodeToString(bytes);
+                        }
                     }
                     @Override
                     protected void done() {
                         try {
-                            String base64Str = get();
-                            fotosBase64.add(base64Str);
-                            lblContadorFotos.setText(fotosBase64.size() + " foto(s) anexada(s) com sucesso.");
+                            String urlImg = get();
+                            if (urlImg != null) {
+                                fotosBase64.add(urlImg);
+                                String mensagem = urlImg.startsWith("http") ? " foto(s) anexada(s) com sucesso." : " foto(s) anexada(s) com sucesso (fallback Base64).";
+                                lblContadorFotos.setText(fotosBase64.size() + mensagem);
+                            } else {
+                                alert("Falha no Upload", "Não foi possível enviar a imagem para o Imgur ou salvar localmente.", true);
+                            }
                         } catch (Exception ex) {
-                            alert("Falha na Leitura", "Não foi possível processar este arquivo de imagem.", true);
+                            String msg = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
+                            alert("Falha no Upload", "Não foi possível enviar a imagem para o Imgur.\n" + msg, true);
                         } finally {
                             btnAnexar.setEnabled(true);
                             btnAnexar.setText("📸 ANEXAR FOTO");
@@ -812,7 +869,7 @@ public class SRMI_Sistema extends JFrame {
             new SwingWorker<Void, Void>() {
                 @Override
                 protected Void doInBackground() throws Exception {
-                    Firestore db = FirestoreClient.getFirestore();
+                    Firestore db = getFirestore();
                     Map<String, Object> dados = new HashMap<>();
                     String categoria = safeString(novoReporte.getCategoria());
                     String descricao = safeString(novoReporte.getDescricao());
@@ -932,7 +989,7 @@ public class SRMI_Sistema extends JFrame {
             @Override
             protected List<Reporte> doInBackground() throws Exception {
                 List<Reporte> lista = new ArrayList<>();
-                Firestore db = FirestoreClient.getFirestore();
+                Firestore db = getFirestore();
                 QuerySnapshot snapshot = db.collection("chamados").get().get();
                 for (QueryDocumentSnapshot doc : snapshot) {
                     String st = getStringOrDefault(doc, "status");
@@ -1056,7 +1113,7 @@ public class SRMI_Sistema extends JFrame {
             @Override
             protected List<Reporte> doInBackground() throws Exception {
                 List<Reporte> lista = new ArrayList<>();
-                Firestore db = FirestoreClient.getFirestore();
+                Firestore db = getFirestore();
                 QuerySnapshot sn = db.collection("chamados").get().get();
                 for (QueryDocumentSnapshot doc : sn) {
                     String status = getStringOrDefault(doc, "status");
@@ -1134,23 +1191,23 @@ public class SRMI_Sistema extends JFrame {
             return;
         }
 
-        String payloadFoto = fotos.get(0); 
-        
+        String urlFoto = fotos.get(0);
+
         new SwingWorker<ImageIcon, Void>() {
             @Override
             protected ImageIcon doInBackground() throws Exception {
-                byte[] imageBytes;
-                if (payloadFoto.startsWith("/") || payloadFoto.contains(":\\") || payloadFoto.contains(":/")) {
-                    File arquivo = new File(payloadFoto);
-                    if (!arquivo.exists()) return null;
-                    imageBytes = Files.readAllBytes(arquivo.toPath());
-                } else {
-                    imageBytes = Base64.getDecoder().decode(payloadFoto);
+                if (urlFoto != null) {
+                    if (urlFoto.startsWith("http")) {
+                        java.awt.Image img = javax.imageio.ImageIO.read(new java.net.URL(urlFoto));
+                        return new ImageIcon(img.getScaledInstance(lblFoto.getWidth(), lblFoto.getHeight(), java.awt.Image.SCALE_SMOOTH));
+                    }
+                    byte[] decoded = java.util.Base64.getDecoder().decode(urlFoto);
+                    java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(decoded));
+                    if (img != null) {
+                        return new ImageIcon(img.getScaledInstance(lblFoto.getWidth(), lblFoto.getHeight(), java.awt.Image.SCALE_SMOOTH));
+                    }
                 }
-                
-                ImageIcon iconeOriginal = new ImageIcon(imageBytes);
-                Image imagem = iconeOriginal.getImage().getScaledInstance(420, 220, Image.SCALE_SMOOTH);
-                return new ImageIcon(imagem);
+                return null;
             }
 
             @Override
@@ -1162,11 +1219,12 @@ public class SRMI_Sistema extends JFrame {
                         lblFoto.setText("");
                     } else {
                         lblFoto.setIcon(null);
-                        lblFoto.setText("Arquivo local de imagem indisponível.");
+                        lblFoto.setText("Nenhuma imagem disponível ou link quebrado.");
                     }
                 } catch (Exception ex) {
                     lblFoto.setIcon(null);
-                    lblFoto.setText("Erro ao renderizar dados Base64.");
+                    lblFoto.setText("Erro ao carregar imagem remota ou Base64 do servidor.");
+                    ex.printStackTrace();
                 }
             }
         }.execute();
@@ -1294,16 +1352,69 @@ public class SRMI_Sistema extends JFrame {
         return f;
     }
 
-    public static void main(String[] args) {
-        // Inicializa o SDK administrativo do Firebase (credenciais via arquivo JSON interno)
-        if (!FirebaseInitializer.inicializar()) {
-            JOptionPane.showMessageDialog(null,
-                    "Não foi possível inicializar o Firebase. Verifique o arquivo firebase-config.json e as credenciais.",
-                    "Erro Firebase",
-                    JOptionPane.ERROR_MESSAGE);
-            System.exit(1);
-        }
+    private static String uploadParaImgur(File arquivo) throws Exception {
+        try {
+            byte[] bytes = java.nio.file.Files.readAllBytes(arquivo.toPath());
+            String b64 = java.util.Base64.getEncoder().encodeToString(bytes);
+            
+            java.net.URL url = new java.net.URL("https://api.imgur.com/3/image");
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Authorization", "Client-ID 9449f2b8429e715");
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            conn.setRequestProperty("Accept", "application/json");
+            
+            String payload = "image=" + java.net.URLEncoder.encode(b64, "UTF-8") + "&type=base64";
+            try (java.io.OutputStream os = conn.getOutputStream()) {
+                os.write(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+            
+            int responseCode = conn.getResponseCode();
+            System.out.println("Status do Imgur: " + responseCode);
+            
+            java.io.InputStream is = (responseCode == 200) ? conn.getInputStream() : conn.getErrorStream();
+            java.io.BufferedReader rd = new java.io.BufferedReader(new java.io.InputStreamReader(is, java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder res = new StringBuilder(); String line;
+            while ((line = rd.readLine()) != null) res.append(line);
+            String r = res.toString();
+            
+            System.out.println("Resposta Completa do Imgur: " + r);
 
-        SwingUtilities.invokeLater(() -> new SRMI_Sistema().setVisible(true));
+            if (responseCode != 200) {
+                throw new java.io.IOException("Imgur retornou " + responseCode + ": " + r);
+            }
+
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\\\"link\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+            java.util.regex.Matcher matcher = pattern.matcher(r);
+            if (matcher.find()) {
+                String lnk = matcher.group(1).replace("\\/", "/");
+                System.out.println("Link extraído com sucesso: " + lnk);
+                return lnk;
+            }
+
+            throw new java.io.IOException("Resposta Imgur não contém link válido: " + r);
+        } catch (Exception e) {
+            throw new java.io.IOException("Erro no upload para Imgur: " + e.getMessage(), e);
+        }
     }
+
+public static void main(String[] args) {
+    // Inicializa o SDK administrativo do Firebase
+    try {
+        FirebaseInitializer.inicializar();
+    } catch (Exception e) {
+        logger.log(Level.SEVERE, "Falha ao conectar ao Firebase: " + e.getMessage(), e);
+        System.err.println("Falha ao conectar: " + e.getMessage());
+        
+        JOptionPane.showMessageDialog(null,
+                "Não foi possível inicializar o Firebase. Verifique o arquivo firebase-config1.json e as credenciais.\n\nDetalhes: " + e.getMessage(),
+                "Erro Firebase",
+                JOptionPane.ERROR_MESSAGE);
+
+        System.exit(1);
+    }
+
+    SwingUtilities.invokeLater(() -> new SRMI_Sistema().setVisible(true));
+}
 }
