@@ -1,21 +1,5 @@
-# Pastas de Build e Compilação
-target/
-**/target/
-*.class
-**/*.class
-
-# Arquivos de Configuração do Firebase
-src/main/resources/firebase-config*.json
-
-# VS Code (Configurações do seu editor)
-.vscode/
-.settings/
-.classpath
-.project
-
-# Arquivos de Sistema e Backups
-.DS_Store
-Thumbs.db
-*.zip
-*.7z
-*.rar
+git rm --cached src/main/resources/firebase-config.json
+git rm --cached src/main/resources/firebase-config1.json
+git add .gitignore
+git commit -m "Remove credenciais Firebase do repositório"
+git push origin main
