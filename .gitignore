@@ -1,0 +1,9 @@
+# Maven build output
+/target/
+
+# Firebase service account credentials
+/src/main/resources/firebase-config.json
+
+# IDE files
+/.idea/
+*.iml
